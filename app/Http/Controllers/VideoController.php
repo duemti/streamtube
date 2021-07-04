@@ -4,7 +4,17 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+
 use Rhilip\Bencode\Bencode;
+use React;
+use Ratchet\MessageComponentInterface;
+use Ratchet\ConnectionInterface;
+
+use Ratchet\Server\IoServer;
+use Ratchet\Http\HttpServer;
+use Ratchet\WebSocket\WsServer;
+use App\Logic\VideoStreamLogic;
+
 
 class VideoController extends Controller
 {
@@ -43,7 +53,7 @@ class VideoController extends Controller
 				// Ignore hidden/padding files
 				if (0 === strncmp('.', $path, 1))
 					continue;
-				echo $path, " - ", $files['length'], "bytes</br>";
+				//echo $path, " - ", $files['length'], "bytes</br>";
 			}
 		}
 
@@ -68,7 +78,7 @@ class VideoController extends Controller
 		foreach (array_chunk($peers_data, 6) as $pd)
 		{
 			$peers[] = [
-				'ip' => implode(':', array_slice($pd, 0, 4)),
+				'ip' => implode('.', array_slice($pd, 0, 4)),
 				'port' => $pd[4] + $pd[5]
 			];
 		}
@@ -76,6 +86,27 @@ class VideoController extends Controller
 
 
 		// Connect to peers
+		$hostname = "tcp://" . $peers[1]['ip'];
+		$port = $peers[1]['port'];
 
+		// Create a new Event Loop. Factory chooses the best loop implementation.
+		/*$loop = React\EventLoop\Factory::create();
+		$socket = new React\Socket\Connector($loop);
+		
+		$socket->connect($hostname . ":" . $port)->then(
+			function (React\Socket\ConnectionInterface $connection) {
+				echo "Connected!";
+				// connected successfuly
+			},
+			function (Exception $error) {
+				echo "Failed!";
+				// failed to connect
+			}
+		);
+		// Run the event loop.
+		$loop->run();
+		 */
+
+		echo "</br></br>< END >";
     }
 }

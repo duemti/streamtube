@@ -22,6 +22,7 @@ services:
             - redis
             - meilisearch
             - selenium
+            - websocket-server
     mysql:
         image: 'mysql:8.0'
         ports:
@@ -77,6 +78,16 @@ services:
             - '/dev/shm:/dev/shm'
        networks:
            - sail
+    websocket-server:
+        image: 'php:7.4-cli'
+        networks:
+            - sail
+        ports:
+            - '6001:6001'
+        volumes:
+            - './services/websocket-server:/usr/src/websocket-server'
+        working_dir: '/usr/src/websocket-server'
+        command: 'php ./src/VideoStreamServer.php'
 networks:
     sail:
         driver: bridge

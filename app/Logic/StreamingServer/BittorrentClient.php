@@ -6,16 +6,20 @@ use \Exception;
 use Illuminate\Support\Facades\Storage;
 use Rhilip\Bencode\Bencode;
 use React\EventLoop\LoopInterface;
-use React\Socket\Connector;
+use React\Socket\TcpConnector;
 use React\Socket\ConnectionInterface;
 use Ratchet\ConnectionInterface as RConnectionInterface;
 
 
 class BittorrentClient
 {
+	private $port = 6881;
+
 	private $torrentLink;
 	private $torrent;
 	private $metainfo;
+	private $info_hash;
+	private $peer_id = "0ST01nwlocvtoivh3e1b";
 	private $filePath = __DIR__ . '/../../../storage/app/test1.torrent';
 	private $trackerResponse;
 	private $peers;
@@ -58,6 +62,7 @@ class BittorrentClient
 			// Single file torrent
 		}
 */
+		$this->info_hash = sha1(Bencode::encode($metainfo['info']), true);
 		$this->metainfo = $metainfo;
 		return [
 			"Title => " . $metainfo['title'],
@@ -68,16 +73,15 @@ class BittorrentClient
 	function	interogateTracker()
 	{
 		// Making the request to Tracker Server
-		$info_hash = sha1(Bencode::encode($this->metainfo['info']), true);
-		$peer_id = "0ST01nwlocvtoivh3e1b";
 		
 		// The request URL
 		$requestUrl = $this->metainfo['announce'] .
-			"?info_hash=" . urlencode($info_hash) .
-			"&peer_id=" . $peer_id;
+			"?info_hash=" . urlencode($this->info_hash) .
+			"&peer_id=" . urlencode($this->peer_id) .
+			"&port=" . $this->port;
 
-		//$response = Bencode::decode(file_get_contents($requestUrl));
-		//file_put_contents($this->filePath . '.meta', serialize($response));
+		$response = Bencode::decode(file_get_contents($requestUrl));
+		file_put_contents($this->filePath . '.meta', serialize($response));
 		$response = unserialize(file_get_contents($this->filePath . '.meta'));
 		$this->trackerResponse = $response;
 		return $trackerResponse;
@@ -90,37 +94,39 @@ class BittorrentClient
 			throw new Exception('Response from tracker is inalid.');
 
 		$peers = array();
-		$peers_data = array_map('ord', str_split($this->trackerResponse['peers']));
+		$peers_data = str_split($this->trackerResponse['peers']);
 		foreach (array_chunk($peers_data, 6) as $pd)
 		{
 			$peers[] = [
-				'ip' => implode('.', array_slice($pd, 0, 4)),
-				'port' => $pd[4] + $pd[5]
+				'ip' => implode('.', array_map('ord', array_slice($pd, 0, 4))),
+				'port' => unpack("n", $pd[4] . $pd[5])[1]
 			];
 		}
 		$this->peers = $peers;
 		return $peers;
 	}
 
-	public function	start(LoopInterface $loop, RConnectionInterface $client)
-	{
+	public function	start(
+		LoopInterface $loop,
+		RConnectionInterface $client
+	) {
 		// Connect to peers
-		$hostname = "tcp://" . $this->peers[2]['ip'];
-		$port = $this->peers[2]['port'];
+		$uri = $this->peers[2]['ip'] . ':' .  $this->peers[2]['port'];
 
-		$socket = new Connector($loop);
-		
-		$socket->connect($hostname . ":" . $port)->then(
-			function (ConnectionInterface $connection) {
-				echo "Connected!\n";
-				$client->send("Connected" . PHP_EOL);
+		$socket = new TcpConnector($loop, array(
+			'bindto' => '0.0.0.0:6881'
+		));
+		$client->send("connecting......" . PHP_EOL);
+		$socket->connect($uri)->then(
+			function (ConnectionInterface $connection) use ($client) {
 				// connected successfuly
+				echo "Connected!\n";
 				$connection->end();
-				$connection->close();
+				$client->send("Succeded!!!" . PHP_EOL);
 			},
-			function (Exception $error) {
+			function (Exception $error) use ($client) {
 				echo "Failed!\n";
-				$client->send("Failed" . PHP_EOL);
+				$client->send("Failed: " . $error->getMessage() . PHP_EOL);
 				// failed to connect
 			}
 		);

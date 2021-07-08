@@ -6,6 +6,7 @@ use \Exception;
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use React\EventLoop\LoopInterface;
+use React\Socket\TcpConnector;
 use App\Logic\StreamingServer\BittorrentClient;
 
 
@@ -64,7 +65,7 @@ class VideoStreamLogic implements MessageComponentInterface
 		$btclient = new BittorrentClient();
 
 		$connection->send('fetch torrent file..' . PHP_EOL);
-		//$btclient->fetchFile();
+		$btclient->fetchFile();
 		foreach ($btclient->getMetainfo() as $v)
 			$connection->send($v . PHP_EOL);
 

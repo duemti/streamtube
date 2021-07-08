@@ -84,6 +84,7 @@ services:
             - sail
         ports:
             - '6001:6001'
+            - '6881:6881'
         volumes:
             - '.:/usr/src/streaming-server'
         working_dir: '/usr/src/streaming-server'

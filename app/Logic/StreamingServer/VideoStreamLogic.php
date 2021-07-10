@@ -62,24 +62,24 @@ class VideoStreamLogic implements MessageComponentInterface
 	private function	initbtc(ConnectionInterface $connection)
 	{
 		// todo: provide torrent link
-		$btclient = new BittorrentClient();
+		$btclient = new BittorrentClient($this->loop, $connection);
 
 		$connection->send('fetch torrent file..' . PHP_EOL);
-		$btclient->fetchFile();
+		//$btclient->fetchFile();
 		foreach ($btclient->getMetainfo() as $v)
 			$connection->send($v . PHP_EOL);
 
-		$btclient->interogateTracker();
-		
-		try {
-			foreach($btclient->getPeers() as $peer)
+		$btclient->interogateTracker($connection);
+	echo "----------------------\n";
+		/*try {
+			foreach($btclient->extractPeers() as $peer)
 				$connection->send($peer['ip'] . ' :' . $peer['port'] . PHP_EOL);
 		} catch (Exception $e) {
 			echo $e->getMessage() . PHP_EOL;
-		}
+		}*/
 
 		$connection->send('connecting to peers..' . PHP_EOL);
-		$btclient->start($this->loop, $connection);
+		//$btclient->start($this->loop, $connection);
 		$connection->send('end.' . PHP_EOL);
 	}
 }

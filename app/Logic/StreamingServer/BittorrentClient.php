@@ -2,18 +2,24 @@
 
 namespace App\Logic\StreamingServer;
 
+use App\Logic\StreamingServer\Tracker;
 use \Exception;
 use Illuminate\Support\Facades\Storage;
 use Rhilip\Bencode\Bencode;
+use Ratchet\ConnectionInterface as WebSocketConnection;
 use React\EventLoop\LoopInterface;
 use React\Socket\TcpConnector;
 use React\Socket\ConnectionInterface;
-use Ratchet\ConnectionInterface as RConnectionInterface;
+use React\Promise\Deferred;
+use React\Promise\PromiseInterface;
 
 
 class BittorrentClient
 {
-	private $port = 6881;
+	// Bittorrent client port.
+	private $port = 6002; 
+	// React loop interface
+	private $loop;
 
 	private $torrentLink;
 	private $torrent;
@@ -24,8 +30,10 @@ class BittorrentClient
 	private $trackerResponse;
 	private $peers;
 
-	public function	__construct(string $torrentLink = 'https://archive.org/download/ThePinkPanther-cartoons/ThePinkPanther-cartoons_archive.torrent')
+	public function	__construct(LoopInterface $loop, WebSocketConnection $webClient, string $torrentLink = 'https://archive.org/download/sintel-torrent/sintel-torrent_archive.torrent'/*'https://webtorrent.io/torrents/sintel.torrent'*/)
 	{
+		$this->loop = $loop;
+		$this->webClient = $webClient;
 		$this->torrentLink = $torrentLink;
 	}
 
@@ -70,31 +78,31 @@ class BittorrentClient
 		];
 	}
 
-	function	interogateTracker()
+	public function	interogateTracker($client)
 	{
-		// Making the request to Tracker Server
-		
-		// The request URL
-		$requestUrl = $this->metainfo['announce'] .
-			"?info_hash=" . urlencode($this->info_hash) .
-			"&peer_id=" . urlencode($this->peer_id) .
-			"&port=" . $this->port;
+		$tracker = new Tracker(
+			$this->loop,
+			$client,
+			$this->metainfo['announce'],
+			$this->info_hash,
+			$this->peer_id
+		);
 
-		$response = Bencode::decode(file_get_contents($requestUrl));
-		file_put_contents($this->filePath . '.meta', serialize($response));
-		$response = unserialize(file_get_contents($this->filePath . '.meta'));
-		$this->trackerResponse = $response;
-		return $trackerResponse;
+		// Execute in Sequential order.
+		$tracker->interogate()
+			->then(array($this, 'extractPeers'))
+			->then(array($this, 'connectToPeer'));
 	}
 
 	// Get the peers (binary)
-	function	getPeers()
+	function	extractPeers(array $trackerResponse): PromiseInterface
 	{
-		if (!isset($this->trackerResponse['peers']))
+		if (!isset($trackerResponse['peers']))
 			throw new Exception('Response from tracker is inalid.');
 
+		$deferred = new Deferred();
 		$peers = array();
-		$peers_data = str_split($this->trackerResponse['peers']);
+		$peers_data = str_split($trackerResponse['peers']);
 		foreach (array_chunk($peers_data, 6) as $pd)
 		{
 			$peers[] = [
@@ -103,25 +111,30 @@ class BittorrentClient
 			];
 		}
 		$this->peers = $peers;
-		return $peers;
+		var_dump($peers);
+		$uri = $peers[0]['ip'] . ':' .  $peers[0]['port'];
+		//$uri = '174.138.32.158:5000';
+		$deferred->resolve($uri);
+		return $deferred->promise();
 	}
 
-	public function	start(
-		LoopInterface $loop,
-		RConnectionInterface $client
-	) {
-		// Connect to peers
-		$uri = $this->peers[2]['ip'] . ':' .  $this->peers[2]['port'];
-
+	/**
+	 * Establish TCP connection to peer
+	 */
+	public function	connectToPeer(string $uri)
+	{
+		$loop = $this->loop;
+		$client = $this->webClient;
 		$socket = new TcpConnector($loop, array(
-			'bindto' => '0.0.0.0:6881'
+			'bindto' => '0.0.0.0:' . $this->port
 		));
+
 		$client->send("connecting......" . PHP_EOL);
 		$socket->connect($uri)->then(
 			function (ConnectionInterface $connection) use ($client) {
 				// connected successfuly
 				echo "Connected!\n";
-				$connection->end();
+				//$connection->end();
 				$client->send("Succeded!!!" . PHP_EOL);
 			},
 			function (Exception $error) use ($client) {

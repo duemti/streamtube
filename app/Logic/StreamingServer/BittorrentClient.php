@@ -37,19 +37,40 @@ class BittorrentClient
 		$this->torrentLink = $torrentLink;
 	}
 
-	function	fetchFile()
+	public function	start()
 	{
+		);
+
+		// Execute in Sequential order:
+		// 1. Fetch the torrent file from remote origin.
+		// 2. Parse the torrent file.
+		// 3. Interogate the Tracker Server.
+		// 4. Parse the Tracker Server's response.
+		// 5. Connect to a Peer.
+		$this->fetchTorrent()
+			->then(array($this, 'parseTorrent'))
+			->then(array(new Tracker(
+					$this->loop,
+					$this->client,
+					$this->metainfo,
+				), 'interogate'))
+			->then(array($this, 'extractPeers'))
+			->then(array($this, 'connectToPeer'));
+	}
+
+	private function	fetchTorrent()
+	{
+		// todo: make async.
 		$torrent = file_get_contents($this->torrentLink);
 
 		file_put_contents($this->filePath, $torrent);
 		$this->torrent = $torrent;
 	}
 
-	function	getMetainfo()
+	private function	parseTorrent(string $torrent)
 	{
-		$torrentFile = file_get_contents($this->filePath);
-
-		$metainfo = Bencode::decode($torrentFile);
+		$deferred = new Deferred();
+		$metainfo = Bencode::decode($torrent);
 
 /*
 		// Parsing Info Dictionary
@@ -70,32 +91,16 @@ class BittorrentClient
 			// Single file torrent
 		}
 */
-		$this->info_hash = sha1(Bencode::encode($metainfo['info']), true);
-		$this->metainfo = $metainfo;
-		return [
-			"Title => " . $metainfo['title'],
-			"Announce => " . $metainfo['announce']
-		];
-	}
-
-	public function	interogateTracker($client)
-	{
-		$tracker = new Tracker(
-			$this->loop,
-			$client,
-			$this->metainfo['announce'],
-			$this->info_hash,
-			$this->peer_id
+		$metainfo[] = array(
+			'info_hash' => sha1(Bencode::encode($metainfo['info']), true)
 		);
-
-		// Execute in Sequential order.
-		$tracker->interogate()
-			->then(array($this, 'extractPeers'))
-			->then(array($this, 'connectToPeer'));
+		$deferred->resolve($metainfo);
+		return $deferred->promise();
 	}
+
 
 	// Get the peers (binary)
-	function	extractPeers(array $trackerResponse): PromiseInterface
+	private function	extractPeers(array $trackerResponse): PromiseInterface
 	{
 		if (!isset($trackerResponse['peers']))
 			throw new Exception('Response from tracker is inalid.');
@@ -121,7 +126,7 @@ class BittorrentClient
 	/**
 	 * Establish TCP connection to peer
 	 */
-	public function	connectToPeer(string $uri)
+	private public function	connectToPeer(string $uri)
 	{
 		$loop = $this->loop;
 		$client = $this->webClient;
@@ -134,6 +139,7 @@ class BittorrentClient
 			function (ConnectionInterface $connection) use ($client) {
 				// connected successfuly
 				echo "Connected!\n";
+				// TODO: start requesting pieces.
 				//$connection->end();
 				$client->send("Succeded!!!" . PHP_EOL);
 			},

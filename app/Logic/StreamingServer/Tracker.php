@@ -19,49 +19,39 @@ class Tracker
 	private $port = 6003;
 	private $loop;
 	private $client;
-	private $info_hash;
-	private $peer_id;
 
 	// array -> Downloaded Torrent file.
 	private $torrent;
 
-	public function	__construct(
-		LoopInterface $loop,
-		WebSocketConnection $client,
-		string $uri,
-		string $info_hash,
-		string $peer_id
-	) {
+	public function	__construct(LoopInterface $loop, WebSocketConnection $client)
+	{
 		$this->loop = $loop;
 		$this->client = $client;
-//$uri = '174.138.32.158:1234';
-		$this->uri = $uri;
-		$this->info_hash = $info_hash;
-		$this->peer_id = $peer_id;
 	}
 
 	/**
 	 * Tracker server uses either HTTP or UDP protocols.
 	 */
-	public function	interogate(): PromiseInterface
+	public function	interogate(array $metainfo): PromiseInterface
 	{
+		//$uri = '174.138.32.158:1234';
 		return (0 === strncmp("udp://", $this->uri, 5))
-			? $this->interogateUdp()
-			: $this->interogateHttp();
+			? $this->interogateUdp($metainfo)
+			: $this->interogateHttp($metainfo);
 	}
 
 	/**
 	 * Donwload torrent file using Http Async.
 	 */
-	public function	interogateHttp(): PromiseInterface
+	private function	interogateHttp(array $metainfo): PromiseInterface
 	{
 		$deferred = new Deferred();
 		$httpClient = new Browser($this->loop);
 		$torrent = &$this->torrent;
 		$webclient = &$this->client;
 		$uri = $this->uri
-			. "?info_hash=" . urlencode($this->info_hash)
-			. "&peer_id=" . urlencode($this->peer_id)
+			. "?info_hash=" . urlencode($metainfo['info_hash'])
+			. "&peer_id=" . urlencode($metainfo['peer_id'])
 			. "&port=" . $this->port;
 
 		echo "Interogating Tracker through HTTP...", PHP_EOL;
@@ -83,17 +73,14 @@ class Tracker
 		return $deferred->promise();
 	}
 
-	public function	interogateUdp()
+	/**
+	 * Making the request to Tracker Server
+	 */
+	private function	interogateUdp(array $metainfo): PromiseInterface
 	{
-		// Making the request to Tracker Server
-		// The request URL
-		//
-		/*$uri = $this->metainfo['announce'];/*
-			"?info_hash=" . urlencode($this->info_hash) .
-			"&peer_id=" . urlencode($this->peer_id) .
-			"&port=" . $this->port;
-		 */
-			
+		$deferred = new Deferred();
+		$deferred->reject("udp not working.");
+
 		$loop = $this->loop;
 		$client = $this->client;
 		$connector = new UdpFactory($this->loop, null, array(
@@ -161,10 +148,6 @@ echo unpack('H*', $connectPacket)[1], PHP_EOL;
 				$client->send($msg);
 			}
 		);
-
-		//file_put_contents($this->filePath . '.meta', serialize($response));
-		//$response = unserialize(file_get_contents($this->filePath . '.meta'));
-		//$this->trackerResponse = $response;
-		//return $trackerResponse;
+		return $deferred->promise();
 	}
 }

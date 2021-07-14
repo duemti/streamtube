@@ -9,13 +9,17 @@ use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
 
 
+/**
+ * TODO: make this Factory pattern.
+ */
 class Peer
 {
 	// Interpreted by bits that represent pieces as in torrent file.
 	private $remotePieces = "";
+	private $loop;
+	private $info_hash;
+	private $boundPort;
 
-	// Total pieces count.
-	private $totalPieces;
 
 	// Client connections start out as "choked" and "not interested".
 	private $state = array(
@@ -25,44 +29,51 @@ class Peer
 		'peer_interested'	=> 0
 	);
 
-	public function	__construct(int $pieces)
+	public function	__construct(LoopInterface $loop, string $info_hash, string $peer_id, string $boundPort)
 	{
-		$this->totalPieces = $pieces;
+		$this->loop = $loop;
+		$this->info_hash = $info_hash;
+		$this->boundPort = $boundPort;
 	}
 
 	/**
 	 * Establish TCP connection to peer.
 	 * return a established connection to a peer OR rejected promise.
 	 */
-	public function	connect(LoopInterface $loop, array $metainfo, array $settings = [])
+	public function	connect(string $uri)
 	{
 		$deferred = new Deferred();
-		$socket = new TcpConnector($loop, array(
+		$socket = new TcpConnector($this->loop, array(
 			'timeout' => 10.0,
-			'bindto' => "0.0.0.0:" . $settings['port']
+			'bindto' => "0.0.0.0:" . $this->boundPort
 		));
 		$peer = $this;
 
-		$uri = "5.39.95.125:52630";
-		//$uri = "91.211.48.61:57543";
-		//$uri = "174.138.32.158:1234";
 		echo "Connecting to peer: $uri\n";
 		$socket->connect($uri)->then(
 			function (ConnectionInterface $connection)
-				use ($deferred, $metainfo, $peer)
+				use ($deferred, $peer)
 			{
 				// connected successfuly
 				echo "Connected!\n";
 
 				echo "performing the handshake...\n";
-				$peer->handshake($connection, $metainfo);
+				$peer->handshake($connection);
 
-				$connection->on('data', function ($data) use ($metainfo, $peer) {
+				$connection->on('data', function ($data) use ($peer) {
 					// Check returned handshake.
 					// Drop connection id info_hash doesn't match.
 					if ('BitTorrent protocol' === unpack('a*', mb_strcut($data, 1, 19))[1])
-						if ($metainfo['info_hash'] === unpack('H*', mb_strcut($data, 28, 20))[1])
+					{
+						if ($peer->info_hash === mb_strcut($data, 28, 20))
+						{
 							$deferred->reject('Peer info_hash doesn\'t match.');
+							echo "Successfull handshake!\n";
+						}
+						else
+							echo "Unsuccessfull handshake.\n";
+						return;
+					}
 
 					// Message Length
 					$mlen = unpack('N', mb_strcut($data, 0, 4))[1];
@@ -72,32 +83,22 @@ class Peer
 						return;
 
 					// Message ID
-					$mid = ord($data[4]);
+					$mid = $data[4];
 					
-					$peer->array(
-						'choke',
-						'unchoke',
-						'interested',
-						'notInterested',
-						'have',
-						'bitfield',
-						'request',
-						'piece',
-						'cancel'
-					)[$mid]($data, $mlen);
-					/*
-						case 0: $peer->choke($data) break;
-						case 1: $peer->unchoke($data) break;
-						case 2: $peer->interested($data) break;
-						case 3: $peer->uninterested($data) break;
-						case 4: $peer->have($data) break;
-						case 5: $peer->bitfield($data) break;
-						case 6: $peer->request($data) break;
-						case 7: $peer->piece($data) break;
-						case 8: $peer->cancel($data) break;
+					switch ($mid)
+					{
+						case 0: $peer->choke($data); break;
+						case 1: $peer->unchoke($data); break;
+						case 2: $peer->interested($data); break;
+						case 3: $peer->uninterested($data); break;
+						case 4: $peer->have($data, $mlen); break;
+						case 5: $peer->bitfield($data, $mlen); break;
+						case 6: $peer->request($data); break;
+						case 7: $peer->piece($data); break;
+						case 8: $peer->cancel($data); break;
 						default:
-							echo 'Warning: unknown message type from peer.\n';
-				}*/
+							echo "Warning: unknown message type '{$mid}' from peer.\n";
+					}
 				});
 
 				$connection->on('close', function () use ($deferred) {
@@ -119,15 +120,16 @@ class Peer
 	/**
 	 * Send a Bittorrent Protocol Handshake.
 	 */
-	private function	handshake(ConnectionInterface $connection, array $metainfo): string
+	private function	handshake(ConnectionInterface $connection)
 	{
 		$handshake = chr(19)
 			. "BitTorrent protocol"
-			. pack("NNH40", 0, 0, $metainfo['info_hash'])
-			. $metainfo['peer_id'];
+			. pack("NN", 0, 0)
+			. $this->info_hash
+			. $this->peer_id;
+		var_dump($this->info_hash);
 
 		$connection->write($handshake);
-		return $handshake;
 	}
 
 	/**
@@ -184,7 +186,7 @@ class Peer
 		if (!empty($this->remotePieces))
 			return;
 
-		$payload = unpack('a*', mb_strcut($data, 5, $mlen - 1)[1];
+		$payload = unpack('a*', mb_strcut($data, 5, $mlen - 1))[1];
 		$this->remotePieces = $payload;
 	}
 

@@ -3,8 +3,8 @@
 namespace App\Logic\StreamingServer;
 
 use App\Logic\StreamingServer\Tracker;
+use App\Logic\StreamingServer\Download;
 use \Exception;
-use Illuminate\Support\Facades\Storage;
 use Rhilip\Bencode\Bencode;
 use Ratchet\ConnectionInterface as WebSocketConnection;
 use React\EventLoop\LoopInterface;
@@ -120,6 +120,8 @@ class BittorrentClient
 		}
 		$metainfo['info_hash'] = sha1(Bencode::encode($metainfo['info']), true);
 		$metainfo['peer_id'] = $this->peer_id;
+		$metainfo['pieces_count'] = strlen($metainfo['pieces']) / 20;
+		file_put_contents(__DIR__.'/../../../storage/app/test2.trnt', serialize($metainfo));
 		return $metainfo;
 	}
 

@@ -22,7 +22,7 @@ services:
             - redis
             - meilisearch
             - selenium
-            - websocket-server
+            - streaming-server
     mysql:
         image: 'mysql:8.0'
         ports:

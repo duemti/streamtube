@@ -11,6 +11,9 @@ use App\Logic\StreamingServer\VideoStreamLogic;
 
 require __DIR__ . '/../../../vendor/autoload.php';
 
+ini_set('log_errors', 'on');
+ini_set('error_log', '/dev/stderr');
+
 // config
 $address = '0.0.0.0';
 $port = 6001;

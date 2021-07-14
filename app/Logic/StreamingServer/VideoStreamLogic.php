@@ -8,6 +8,7 @@ use Ratchet\ConnectionInterface;
 use React\EventLoop\LoopInterface;
 use React\Socket\TcpConnector;
 use App\Logic\StreamingServer\BittorrentClient;
+use App\Logic\StreamingServer\Peer;
 
 
 class VideoStreamLogic implements MessageComponentInterface
@@ -62,9 +63,21 @@ class VideoStreamLogic implements MessageComponentInterface
 	private function	initbtc(ConnectionInterface $connection)
 	{
 		// todo: provide torrent link
-		$btclient = new BittorrentClient($this->loop, $connection);
-
-		$btclient->start();
+		//$btclient = new BittorrentClient($this->loop, $connection);
+		//$btclient->start();
 		echo "----------------------\n";
+
+		// 802eeb8958d6e8008d8a39ebd39f68ac9725307a
+		$metainfo = [
+			'info_hash' => "802eeb8958d6e8008d8a39ebd39f68ac9725307a",
+			'peer_id' => "-ST2021-123456789123"
+		];
+		$settings = array(
+			'port' => 6002
+		);
+		echo "Connect to peer...\n";
+		$peer = new Peer();
+		$peer->connect($this->loop, $metainfo, $settings);
+		echo "async...\n";
 	}
 }

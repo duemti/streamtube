@@ -8,18 +8,18 @@ use Illuminate\Support\Facades\Storage;
 use Rhilip\Bencode\Bencode;
 use Ratchet\ConnectionInterface as WebSocketConnection;
 use React\EventLoop\LoopInterface;
-use React\Socket\TcpConnector;
-use React\Socket\ConnectionInterface;
+use React\Http\Browser;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
+use Psr\Http\Message\ResponseInterface;
 
 
 class BittorrentClient
 {
-	// Bittorrent client port.
-	private $port = 6002; 
 	// React loop interface
 	private $loop;
+	// Client from websocket end.
+	private $webClient;
 
 	private $torrentLink;
 	private $torrent;
@@ -39,40 +39,67 @@ class BittorrentClient
 
 	public function	start()
 	{
-		);
-
 		// Execute in Sequential order:
 		// 1. Fetch the torrent file from remote origin.
 		// 2. Parse the torrent file.
 		// 3. Interogate the Tracker Server.
 		// 4. Parse the Tracker Server's response.
 		// 5. Connect to a Peer.
-		$this->fetchTorrent()
-			->then(array($this, 'parseTorrent'))
-			->then(array(new Tracker(
-					$this->loop,
-					$this->client,
-					$this->metainfo,
-				), 'interogate'))
-			->then(array($this, 'extractPeers'))
-			->then(array($this, 'connectToPeer'));
+		$this->fetchTorrent($this->torrentLink)
+			->then(
+				array($this, 'parseTorrent'),
+				array($this, 'error'))
+			->then(
+				array(new Tracker($this->loop, $this->webClient), 'interogate'))
+			->then(
+				array($this, 'extractPeers'));
+			/*->then(
+				array($this, 'connectToPeer'),
+				array($this, 'error'));
+			 */
 	}
 
-	private function	fetchTorrent()
+	/**
+	 * Echo error to stdout.
+	 */
+	public function	error(Exception $error)
 	{
-		// todo: make async.
-		$torrent = file_get_contents($this->torrentLink);
-
-		file_put_contents($this->filePath, $torrent);
-		$this->torrent = $torrent;
+		echo "There was an error: ", $error->getMessage(), PHP_EOL;
+		//throw new Exception($error);
 	}
 
-	private function	parseTorrent(string $torrent)
+	/**
+	 * Asynchroniously Download torrent file.
+	 * return a promise.
+	 */
+	public function	fetchTorrent(string $uri): PromiseInterface
 	{
 		$deferred = new Deferred();
+		$httpClient = new Browser($this->loop);
+
+		echo "downloading the torrent file...\n";
+		$httpClient->get($uri)->then(
+			function (ResponseInterface $response) use ($deferred)
+			{
+				echo "downloaded.\n";
+				$deferred->resolve((string)$response->getBody());
+			},
+			function (Exception $error) use ($deferred)
+			{
+				echo "failed.\n";
+				$deferred->reject($error);
+			}
+		);
+		return $deferred->promise();
+	}
+
+	/**
+	 * TODO: not finished
+	 */
+	public function	parseTorrent(string $torrent): array
+	{
 		$metainfo = Bencode::decode($torrent);
 
-/*
 		// Parsing Info Dictionary
 		$info = $metainfo['info'];
 		// Multiple torrent file
@@ -85,27 +112,25 @@ class BittorrentClient
 				// Ignore hidden/padding files
 				if (0 === strncmp('.', $path, 1))
 					continue;
-				//echo $path, " - ", $files['length'], "bytes</br>";
+				$tfile = $path. " - ". $files['length']. "bytes</br>";
+				$this->webClient->send($tfile);
 			}
 		} else {
 			// Single file torrent
 		}
-*/
-		$metainfo[] = array(
-			'info_hash' => sha1(Bencode::encode($metainfo['info']), true)
-		);
-		$deferred->resolve($metainfo);
-		return $deferred->promise();
+		$metainfo['info_hash'] = sha1(Bencode::encode($metainfo['info']), true);
+		$metainfo['peer_id'] = $this->peer_id;
+		return $metainfo;
 	}
 
 
 	// Get the peers (binary)
-	private function	extractPeers(array $trackerResponse): PromiseInterface
+	public function	extractPeers(array $trackerResponse): PromiseInterface
 	{
-		if (!isset($trackerResponse['peers']))
-			throw new Exception('Response from tracker is inalid.');
-
 		$deferred = new Deferred();
+		if (!isset($trackerResponse['peers']))
+			$deferred->reject('Response from tracker is inalid.');
+
 		$peers = array();
 		$peers_data = str_split($trackerResponse['peers']);
 		foreach (array_chunk($peers_data, 6) as $pd)
@@ -121,33 +146,5 @@ class BittorrentClient
 		//$uri = '174.138.32.158:5000';
 		$deferred->resolve($uri);
 		return $deferred->promise();
-	}
-
-	/**
-	 * Establish TCP connection to peer
-	 */
-	private public function	connectToPeer(string $uri)
-	{
-		$loop = $this->loop;
-		$client = $this->webClient;
-		$socket = new TcpConnector($loop, array(
-			'bindto' => '0.0.0.0:' . $this->port
-		));
-
-		$client->send("connecting......" . PHP_EOL);
-		$socket->connect($uri)->then(
-			function (ConnectionInterface $connection) use ($client) {
-				// connected successfuly
-				echo "Connected!\n";
-				// TODO: start requesting pieces.
-				//$connection->end();
-				$client->send("Succeded!!!" . PHP_EOL);
-			},
-			function (Exception $error) use ($client) {
-				echo "Failed!\n";
-				$client->send("Failed: " . $error->getMessage() . PHP_EOL);
-				// failed to connect
-			}
-		);
 	}
 }

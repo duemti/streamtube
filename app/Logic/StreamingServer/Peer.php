@@ -2,134 +2,126 @@
 
 namespace App\Logic\StreamingServer;
 
-use React\EventLoop\LoopInterface;
 use React\Socket\ConnectionInterface;
-use React\Socket\TcpConnector;
-use React\Promise\Deferred;
-use React\Promise\PromiseInterface;
 
 
-/**
- * TODO: make this Factory pattern.
- */
 class Peer
 {
+	// End peer connection
+	private $conn;
+
 	// Interpreted by bits that represent pieces as in torrent file.
 	private $remotePieces = "";
-	private $loop;
-	private $info_hash;
-	private $boundPort;
 
+	// Buffering the messages.
+	private $packet = "";
 
 	// Client connections start out as "choked" and "not interested".
 	private $state = array(
+		'handshake'			=> 0,
 		'am_choking'		=> 1,
 		'am_interested'		=> 0,
 		'peer_choking'		=> 1,
 		'peer_interested'	=> 0
 	);
 
-	public function	__construct(LoopInterface $loop, string $info_hash, string $peer_id, string $boundPort)
+	public function	__construct(ConnectionInterface $conn)
 	{
-		$this->loop = $loop;
-		$this->info_hash = $info_hash;
-		$this->boundPort = $boundPort;
+		$this->conn = $conn;
+		$this->registerRouter();
+
 	}
 
-	/**
-	 * Establish TCP connection to peer.
-	 * return a established connection to a peer OR rejected promise.
-	 */
-	public function	connect(string $uri)
+	public function	send(string $type, ?string $payload)
 	{
-		$deferred = new Deferred();
-		$socket = new TcpConnector($this->loop, array(
-			'timeout' => 10.0,
-			'bindto' => "0.0.0.0:" . $this->boundPort
-		));
-		$peer = $this;
-
-		echo "Connecting to peer: $uri\n";
-		$socket->connect($uri)->then(
-			function (ConnectionInterface $connection)
-				use ($deferred, $peer)
-			{
-				// connected successfuly
-				echo "Connected!\n";
-
-				echo "performing the handshake...\n";
-				$peer->handshake($connection);
-
-				$connection->on('data', function ($data) use ($peer) {
-					// Check returned handshake.
-					// Drop connection id info_hash doesn't match.
-					if ('BitTorrent protocol' === unpack('a*', mb_strcut($data, 1, 19))[1])
-					{
-						if ($peer->info_hash === mb_strcut($data, 28, 20))
-						{
-							$deferred->reject('Peer info_hash doesn\'t match.');
-							echo "Successfull handshake!\n";
-						}
-						else
-							echo "Unsuccessfull handshake.\n";
-						return;
-					}
-
-					// Message Length
-					$mlen = unpack('N', mb_strcut($data, 0, 4))[1];
-
-					// Ignore Keep-alive messages.
-					if (0 === $mlen)
-						return;
-
-					// Message ID
-					$mid = $data[4];
-					
-					switch ($mid)
-					{
-						case 0: $peer->choke($data); break;
-						case 1: $peer->unchoke($data); break;
-						case 2: $peer->interested($data); break;
-						case 3: $peer->uninterested($data); break;
-						case 4: $peer->have($data, $mlen); break;
-						case 5: $peer->bitfield($data, $mlen); break;
-						case 6: $peer->request($data); break;
-						case 7: $peer->piece($data); break;
-						case 8: $peer->cancel($data); break;
-						default:
-							echo "Warning: unknown message type '{$mid}' from peer.\n";
-					}
-				});
-
-				$connection->on('close', function () use ($deferred) {
-					echo "Peer dropped the connection.", PHP_EOL;
-					$deferred->reject("Peer dropped connection");
-				});
-
-				// TODO: start requesting pieces.
-			},
-			function (Exception $error) use ($deferred)
-			{
-				echo $error->getMessage(), PHP_EOL;
-				$deferred->reject($error);
-			}
-		);
-		return $deferred->promise();
+		switch ($type)
+		{
+			case 'handshake': $this->sendHandshake($payload); break;
+			case 'choke': $this->sendChoke(); break;
+			case 'unchoke': $this->sendUnchoke(); break;
+			case 'interested': $this->sendInterested(); break;
+			case 'notinterested': $this->sendNotInterested(); break;
+			case 'request': $this->sendRequest($payload); break;
+			default: echo "Unknown message type: $type\n";
+		}
 	}
+
 
 	/**
 	 * Send a Bittorrent Protocol Handshake.
 	 */
-	private function	handshake(ConnectionInterface $connection)
+	private function	sendHandshake(string $payload)
 	{
-		$handshake = chr(19)
+		$this->conn->write(chr(19)
 			. "BitTorrent protocol"
 			. pack("NN", 0, 0)
-			. $this->info_hash
-			. $this->peer_id;
-		var_dump($this->info_hash);
+			. $payload
+		);
+	}
 
-		$connection->write($handshake);
+	/**
+	 * Check the received Handshake.
+	 */
+	private function	checkHandshake(string $data)
+	{
+		if (('BitTorrent protocol' === unpack('a*', mb_strcut($data, 1, 19))[1])
+			&& ($info_hash === mb_strcut($data, 28, 20)))
+			echo "Successfull handshake!\n";
+		else {
+			// Dropping the connection.
+			echo "Unsuccessfull handshake!\n";
+			$connection->close();
+			$deferred->reject("Unsuccessfull Handshake.");
+		}
+	}
+
+	/**
+	 * Ensures consistency with packets that are received.
+	 */
+	private function	registerRouter()
+	{
+		$peer = $this;
+
+		$this->conn->on('data', function ($data) use ($peer)
+		{
+			if (0 === $peer->state['handshake'])
+				return $peer->checkHandshake($data);
+
+			$peer->packet .= $data;
+			$len = unpack('N', substr($peer->packet, 0, 4))[1];
+
+			if ($len + 4 <= strlen($peer->packet))
+			{
+				$peer->packet = substr($peer->packet, $len + 4);
+				if (0 === $len)
+					echo "Keep-alive Message.\n";
+				else
+					$peer->onMessage($peer->packet[4], substr($peer->packet, 5, $len - 1);
+			}
+		}
+	}
+
+	/**
+	 * Handles incoming Messages.
+	 * a kind of switcher.
+	 */
+	private function	onMessage(int $mid, string $payload)
+	{
+			switch ($mid)
+			{
+				case 0: $peer->choke($data); break;
+				case 1: $peer->unchoke($data); break;
+				case 2: $peer->interested($data); break;
+				case 3: $peer->uninterested($data); break;
+				case 4: $peer->have($data, $mlen); break;
+				case 5: $peer->bitfield($data, $mlen); break;
+				case 6: $peer->request($data); break;
+				case 7: $peer->piece($data); break;
+			case 8: $peer->cancel($data); break;
+			default:
+				echo "Warning: unknown message type '{$mid}' from peer.\n";
+			}
+		}
 	}
 
 	/**
@@ -157,6 +149,12 @@ class Peer
 	{
 		echo "End peer interested in me.\n";
 		$this->state['peer_interested'] = 1;
+	}
+
+	private function	sendInterested()
+	{
+		$this->state['am_interested'] = 1;
+		$this->conn->write(pack('N', 1) . '2');
 	}
 
 	private function	notInterested(string $data)
@@ -197,6 +195,18 @@ class Peer
 	private function	request(string $data)
 	{
 		echo "Received a REQUEST, ignoring...\n";
+	}
+
+	/**
+	 * Request a Piece chunk from remote peer.
+	 */
+	private function	sendRequest(string $payload)
+	{
+		$this->conn->write(
+			pack('N', 13),
+			6,
+			pack('NNN', $payload);
+		);
 	}
 
 	/**

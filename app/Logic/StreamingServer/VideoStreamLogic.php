@@ -6,7 +6,6 @@ use \Exception;
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use React\EventLoop\LoopInterface;
-use React\Socket\TcpConnector;
 use App\Logic\StreamingServer\BittorrentClient;
 use App\Logic\StreamingServer\Download;
 

@@ -79,6 +79,8 @@ services:
        networks:
            - sail
     streaming-server:
+        build:
+            context: ./Dockerfile-bittorrent
         image: 'php:7.4-cli'
         networks:
             - sail

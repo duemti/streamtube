@@ -62,8 +62,8 @@ class VideoStreamLogic implements MessageComponentInterface
 	private function	initbtc(ConnectionInterface $connection)
 	{
 		// todo: provide torrent link
-		//$btclient = new BittorrentClient($this->loop, $connection);
-		//$btclient->start();
+		$btclient = new BittorrentClient($this->loop, $connection);
+		$btclient->start();
 		echo "----------------------\n";
 
 		$metainfo = [

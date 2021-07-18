@@ -120,7 +120,7 @@ class BittorrentClient
 		}
 		$metainfo['info_hash'] = sha1(Bencode::encode($metainfo['info']), true);
 		$metainfo['peer_id'] = $this->peer_id;
-		$metainfo['pieces_count'] = strlen($metainfo['pieces']) / 20;
+		$metainfo['pieces_count'] = strlen($metainfo['info']['pieces']) / 20;
 		file_put_contents(__DIR__.'/../../../storage/app/test2.trnt', serialize($metainfo));
 		return $metainfo;
 	}

@@ -1,4 +1,0 @@
-# syntax=docker/dockerfile:1
-FROM php:7.4-cli
-RUN pecl install ds \
-	&& docker-php-ext-enable ds

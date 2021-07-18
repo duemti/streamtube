@@ -79,8 +79,6 @@ services:
        networks:
            - sail
     streaming-server:
-        build:
-            context: ./Dockerfile-bittorrent
         image: 'php:7.4-cli'
         networks:
             - sail
@@ -91,6 +89,11 @@ services:
         volumes:
             - '.:/usr/src/streaming-server'
         working_dir: '/usr/src/streaming-server'
+        command: bash -c "
+            pecl install ds
+            && pecl install mb
+            && docker-php-ext-enable ds mb
+            "
         command: 'php app/Logic/StreamingServer/VideoStreamServer.php'
 networks:
     sail:

@@ -134,8 +134,8 @@ class Peer
 	 */
 	private function	getPacket(int $len): string
 	{
-		$msg = substr($this->packet, 0, $len);
-		$this->packet = substr($this->packet, $len);
+		$msg = mb_strcut($this->packet, 0, $len);
+		$this->packet = mb_strcut($this->packet, $len);
 		return $msg;
 	}
 
@@ -154,16 +154,14 @@ class Peer
 			if ('ok' !== $peer->state['handshake'])
 				return $peer->checkHandshake($peer->getPacket(68));
 
-			$len = unpack('N', substr($peer->packet, 0, 4))[1];
-
-			if ($len + 4 <= strlen($peer->packet))
-			{
-				$packet = $peer->getPacket($len + 4);
-				if (0 === $len)
-					echo "Keep-alive Message.\n";
-				else
-					$peer->onMessage(substr($packet, 5, $len - 1));
-			}
+var_dump(mb_strcut($peer->packet, 0, 4));
+			$len = unpack("N", mb_strcut($peer->packet, 0, 4));
+var_dump($len);
+var_dump(unpack('N', pack('N', 1)));
+			if (0 === $len)
+				echo "Keep-alive Message.\n";
+			elseif ($len + 4 <= strlen($peer->packet))
+				$peer->onMessage($peer->getPacket($len + 4));
 		});
 	}
 
@@ -174,23 +172,20 @@ class Peer
 	 */
 	private function	onMessage(string $packet)
 	{
-		$mid = $packet[4];
-		$data = substr($packet, 5);
+		$mid = (int)$packet[4];
+		$payload = mb_strcut($packet, 5);
+		$msgs = [
+			'choke',		'unchoke',
+			'interested',	'notInterested',
+			'have',			'bitfield',
+			'request',		'piece',
+			'cancel',		'port'
+		];
 
-		switch ($mid)
-		{
-			case 0: $this->choke($data); break;
-			case 1: $this->unchoke($payload); break;
-			case 2: $this->interested($data); break;
-			case 3: $this->uninterested($data); break;
-			case 4: $this->have($data, $mlen); break;
-			case 5: $this->bitfield($data, $mlen); break;
-			case 6: $this->request($data); break;
-			case 7: $this->piece($payload); break;
-			case 8: $this->cancel($data); break;
-			default:
-				echo "Warning: unknown message type '{$mid}' from peer.\n";
-		}
+		if (!isset($msgs[$mid]))
+			echo "Warning: unknown message type '{$mid}' from peer.\n";
+		else
+			$this->{$msgs[$mid]}($payload);
 	}
 
 	/**
@@ -199,7 +194,8 @@ class Peer
 	private function	choke(string $data)
 	{
 		echo "End peer has choked me.\n";
-		$this->state['peer_choked'] = 2;
+		$this->state['peer_choked'] = 1;
+		$this->notify('choke');
 	}
 
 	/**

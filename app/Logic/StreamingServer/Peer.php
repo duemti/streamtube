@@ -44,16 +44,16 @@ class Peer
 		$this->incomingMessagesListener();
 	}
 
-	public function	send(string $type, string $payload = "")
+	public function	send(string $type, ...$fields)
 	{
 		switch ($type)
 		{
-			case 'handshake': $this->sendHandshake($payload); break;
+			case 'handshake': $this->sendHandshake($fields[0]); break;
 			case 'choke': $this->sendChoke(); break;
 			case 'unchoke': $this->sendUnchoke(); break;
 			case 'interested': $this->sendInterested(); break;
 			case 'notinterested': $this->sendNotInterested(); break;
-			case 'request': $this->sendRequest($payload); break;
+			case 'request': $this->sendRequest($fields[0], $fields[1], $fields[2]); break;
 			default: echo "Unknown message type: $type\n";
 		}
 	}
@@ -85,7 +85,7 @@ class Peer
 	private function	sendInterested()
 	{
 		$this->state['am_interested'] = 1;
-		$this->talk(2);
+		$this->sendPacket(chr(2));
 	}
 
 	/**
@@ -94,20 +94,20 @@ class Peer
 	private function	sendNotInterested()
 	{
 		$this->state['am_interested'] = 0;
-		$this->talk(3);
+		$this->sendPacket(chr(3));
 	}
 
-	private function	talk(int $mid, string $payload = "")
+	private function	sendPacket(string $payload)
 	{
-		$this->conn->write(pack('N', strlen($payload) + 1) . $mid . $payload);
+		$this->conn->write(pack('N', strlen($payload)) . $payload);
 	}
 
 	/**
 	 * Request a Piece chunk from remote peer.
 	 */
-	private function	sendRequest(string $payload)
+	private function	sendRequest(int $piece, int $block, int $length)
 	{
-		$this->talk(6, pack('NNN', $payload));
+		$this->sendPacket(pack('CNNN', 6, $piece, $block, $length));
 	}
 
 	/**
@@ -131,37 +131,45 @@ class Peer
 
 	/**
 	 * Extract message from buffered container.
+	 * Ensures consistency with packets that are received.
 	 */
-	private function	getPacket(int $len): string
+	private function	parsePacket(string $data)
 	{
-		$msg = mb_strcut($this->packet, 0, $len);
-		$this->packet = mb_strcut($this->packet, $len);
-		return $msg;
+		$this->packet .= $data;
+		if ($this->state['handshake'] !== 'ok')
+		{
+			if (strlen($this->packet) >= 68)
+			{
+				$this->checkHandshake(substr($this->packet, 0, 68));
+				$this->packet = substr($this->packet, 68);
+			}
+			// else not full packet
+		} else {
+			// process the buffer untill there are no more full packets there
+			while (4 <= strlen($this->packet))
+			{
+				$len = unpack("N1", $this->packet)[1];
+
+				if ($len + 4 < strlen($this->packet))
+					break;
+
+				$id = ($len) ? ord($this->packet[4]) : -1;
+				$payload = ($len) ? substr($this->packet, 5, $len - 1) : "";
+
+				$this->packet = substr($this->packet, $len + 4);
+				$this->onMessage($id, $payload);
+			}
+		}
 	}
 
 	/**
-	 * Ensures consistency with packets that are received.
 	 */
 	private function	incomingMessagesListener()
 	{
 		$peer = $this;
 
-		$this->conn->on('data', function ($data) use ($peer)
-		{
-			$peer->packet .= $data;
-
-			// make sure the end peer handshaked.
-			if ('ok' !== $peer->state['handshake'])
-				return $peer->checkHandshake($peer->getPacket(68));
-
-var_dump(mb_strcut($peer->packet, 0, 4));
-			$len = unpack("N", mb_strcut($peer->packet, 0, 4));
-var_dump($len);
-var_dump(unpack('N', pack('N', 1)));
-			if (0 === $len)
-				echo "Keep-alive Message.\n";
-			elseif ($len + 4 <= strlen($peer->packet))
-				$peer->onMessage($peer->getPacket($len + 4));
+		$this->conn->on('data', function ($data) use ($peer) {
+			$peer->parsePacket($data);
 		});
 	}
 
@@ -170,11 +178,10 @@ var_dump(unpack('N', pack('N', 1)));
 	 * **************************************************************************
 	 * a kind of switcher.
 	 */
-	private function	onMessage(string $packet)
+	private function	onMessage(int $mid, string $payload)
 	{
-		$mid = (int)$packet[4];
-		$payload = mb_strcut($packet, 5);
 		$msgs = [
+			-1 =>			'keepAlive',
 			'choke',		'unchoke',
 			'interested',	'notInterested',
 			'have',			'bitfield',
@@ -182,16 +189,29 @@ var_dump(unpack('N', pack('N', 1)));
 			'cancel',		'port'
 		];
 
-		if (!isset($msgs[$mid]))
+		if (!isset($msgs[ $mid ]))
 			echo "Warning: unknown message type '{$mid}' from peer.\n";
 		else
-			$this->{$msgs[$mid]}($payload);
+		{
+			if (!empty($payload))
+				$this->{$msgs[ $mid ]}($payload);
+			else
+				$this->{$msgs[ $mid ]}();
+		}
+	}
+
+	/**
+	 * Keep-alive
+	 */
+	private function	keepAlive()
+	{
+		echo "Keep-alive Message.\n";
 	}
 
 	/**
 	 * End Peer has CHOKED me.
 	 */
-	private function	choke(string $data)
+	private function	choke()
 	{
 		echo "End peer has choked me.\n";
 		$this->state['peer_choked'] = 1;
@@ -201,7 +221,7 @@ var_dump(unpack('N', pack('N', 1)));
 	/**
 	 * End Peer has UNCHOKED me.
 	 */
-	private function	unchoke(string $data)
+	private function	unchoke()
 	{
 		echo "End peer has un-choked me.\n";
 		$this->state['peer_choked'] = 0;
@@ -211,13 +231,13 @@ var_dump(unpack('N', pack('N', 1)));
 	/**
 	 * Whether or not the remote peer is interested in something this client has to offer.
 	 */
-	private function	interested(string $data)
+	private function	interested()
 	{
 		echo "End peer interested in me.\n";
 		$this->state['peer_interested'] = 1;
 	}
 
-	private function	notInterested(string $data)
+	private function	notInterested()
 	{
 		echo "End peer not-interested in me.\n";
 		$this->state['peer_interested'] = 0;
@@ -237,14 +257,14 @@ var_dump(unpack('N', pack('N', 1)));
 	 * Received immediately after the handshake.
 	 * Each bit in data represent that either the end-peer have, 1, or not have, 0, a piece.
 	 */
-	private function	bitfield(string $data, int $mlen)
+	private function	bitfield(string $payload)
 	{
 		echo "Received bitfield\n";
 		// too late to receive this message.
 		if (!empty($this->remotePieces))
 			return;
 
-		$payload = unpack('a*', mb_strcut($data, 5, $mlen - 1))[1];
+		$payload = unpack('a*', $payload)[1];
 		$this->remotePieces = $payload;
 	}
 
@@ -264,9 +284,9 @@ var_dump(unpack('N', pack('N', 1)));
 	 * begin: integer specifying the zero-based byte offset within the piece
 	 * block: block of data, which is a subset of the piece specified by index.
 	 */
-	private function	piece(string $data)
+	private function	piece(string $payload)
 	{
-		var_dump($data);
+		var_dump($payload);
 		$this->notify('piece');
 	}
 

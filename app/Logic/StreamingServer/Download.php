@@ -61,14 +61,13 @@ class Download
 					$downloader->peers->remove($id);
 					break;
 				case 'unchoke':
-					echo "Total pieces: ", $peer->torrent['piece_count'], PHP_EOL;
-					echo "Piece length: ", $peer->torrent['piece_length'], PHP_EOL;
+					echo "Total pieces: ", $downloader->torrent['pieces_count'], PHP_EOL;
+					echo "Piece length: ", $downloader->torrent['info']['piece_length'], PHP_EOL;
 					$piece = 0;
 					$block = 0;
 					$length = 2 ** 14;
 					echo "Send request for piece:\t$piece,\t$block...\n";
-					$payload = "$piece$block$length";
-					$downloader->peers->get($id)->send('request', $payload);
+					$downloader->peers->get($id)->send('request', $piece, $block, $length);
 					break;
 				case 'piece':
 					echo "Received a Piece of piece!!!!\n";

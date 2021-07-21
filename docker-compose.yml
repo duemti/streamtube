@@ -22,7 +22,7 @@ services:
             - redis
             - meilisearch
             - selenium
-            - streaming-server
+            - bittorrent
     mysql:
         image: 'mysql:8.0'
         ports:
@@ -78,7 +78,7 @@ services:
             - '/dev/shm:/dev/shm'
        networks:
            - sail
-    streaming-server:
+    bittorrent:
         image: 'php:7.4-cli'
         networks:
             - sail

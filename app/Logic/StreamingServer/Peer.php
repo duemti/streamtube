@@ -4,6 +4,8 @@ namespace App\Logic\StreamingServer;
 
 use React\Stream\DuplexStreamInterface;
 use React\Socket\ConnectionInterface;
+use React\Promise\Deferred;
+use React\Promise\PromiseInterface;
 
 
 class Peer
@@ -18,15 +20,18 @@ class Peer
 	// communicate async with downloader.
 	private $notifier;
 
+	// New notifier, through promises.
+	private $promises = array();
+
 	// Interpreted by bits that represent pieces as in torrent file.
 	private $remotePieces = "";
 
 	// Buffering the messages.
-	private $packet = "";
+	private $buffer = "";
 
 	// Client connections start out as "choked" and "not interested".
 	private $state = array(
-		'handshake'			=> '',
+		'handshake'			=> 'ko',
 		'am_choking'		=> 1,
 		'am_interested'		=> 0,
 		'peer_choking'		=> 1,
@@ -41,6 +46,7 @@ class Peer
 		$this->conn = $conn;
 		$this->notifier = $notifier;
 		$this->id = $id;
+
 		$this->incomingMessagesListener();
 	}
 
@@ -53,7 +59,7 @@ class Peer
 			case 'unchoke': $this->sendUnchoke(); break;
 			case 'interested': $this->sendInterested(); break;
 			case 'notinterested': $this->sendNotInterested(); break;
-			case 'request': $this->sendRequest($fields[0], $fields[1], $fields[2]); break;
+			case 'request': return $this->sendRequest($fields[0], $fields[1], $fields[2]); break;
 			default: echo "Unknown message type: $type\n";
 		}
 	}
@@ -105,9 +111,13 @@ class Peer
 	/**
 	 * Request a Piece chunk from remote peer.
 	 */
-	private function	sendRequest(int $piece, int $block, int $length)
+	private function	sendRequest(int $piece, int $block, int $length): PromiseInterface
 	{
+		$promise = new Deferred();
+
+		$this->promises["$piece|$block"] = $promise;
 		$this->sendPacket(pack('CNNN', 6, $piece, $block, $length));
+		return $promise->promise();
 	}
 
 	/**
@@ -135,30 +145,35 @@ class Peer
 	 */
 	private function	parsePacket(string $data)
 	{
-		$this->packet .= $data;
+		$this->buffer .= $data;
+
 		if ($this->state['handshake'] !== 'ok')
 		{
-			if (strlen($this->packet) >= 68)
+			if (68 <= strlen($this->buffer))
 			{
-				$this->checkHandshake(substr($this->packet, 0, 68));
-				$this->packet = substr($this->packet, 68);
+				$payload = substr($this->buffer, 0, 68);
+				$this->buffer = substr($this->buffer, 68);
+				$this->checkHandshake($payload);
 			}
+			else
+				return ;
 			// else not full packet
-		} else {
-			// process the buffer untill there are no more full packets there
-			while (4 <= strlen($this->packet))
-			{
-				$len = unpack("N1", $this->packet)[1];
+		}
 
-				if ($len + 4 < strlen($this->packet))
-					break;
+		// process the buffer untill there are no more full packets there
+		while (4 <= strlen($this->buffer))
+		{
+			$len = unpack("N1", $this->buffer)[1];
+			if ($len + 4 > strlen($this->buffer))
+				break;
 
-				$id = ($len) ? ord($this->packet[4]) : -1;
-				$payload = ($len) ? substr($this->packet, 5, $len - 1) : "";
+echo "PASS: $len < ", strlen($this->buffer), PHP_EOL;
 
-				$this->packet = substr($this->packet, $len + 4);
-				$this->onMessage($id, $payload);
-			}
+			$id = ($len) ? ord($this->buffer[4]) : -1;
+			$payload = ($len) ? substr($this->buffer, 5, $len - 1) : "";
+
+			$this->buffer = substr($this->buffer, $len + 4);
+			$this->onMessage($id, $payload);
 		}
 	}
 
@@ -215,7 +230,7 @@ class Peer
 	{
 		echo "End peer has choked me.\n";
 		$this->state['peer_choked'] = 1;
-		$this->notify('choke');
+		$this->notify('choked');
 	}
 
 	/**
@@ -225,7 +240,7 @@ class Peer
 	{
 		echo "End peer has un-choked me.\n";
 		$this->state['peer_choked'] = 0;
-		$this->notify('unchoke');
+		$this->notify('ready');
 	}
 
 	/**
@@ -286,8 +301,20 @@ class Peer
 	 */
 	private function	piece(string $payload)
 	{
-		var_dump($payload);
-		$this->notify('piece');
+		var_dump(unpack("N2", substr($payload, 0, 8)));
+		list(, $index, $begin) = unpack("N2", substr($payload, 0, 8));
+		// The promise identificator.
+		$pid = "$index|$begin";
+
+		if (isset($this->promises[$pid]))
+			$this->promises[$pid]->resolve([
+				$index,
+				$begin,
+				substr($payload, 8)
+			]);
+		else
+			echo "Warning: Unknown block received '$pid' ignoring...\n";
+		$this->notify('ready');
 	}
 
 	/**

@@ -4,7 +4,7 @@ namespace App\Logic\StreamingServer;
 
 use \Exception;
 use Ratchet\ConnectionInterface as WebSocketConnection;
-use React\EventLoop\LoopInterface;
+use React\EventLoop\Loop;
 use React\Datagram\Factory as UdpFactory;
 use React\Datagram\Socket as UdpSocket;
 use React\Http\Browser;
@@ -17,15 +17,13 @@ use Rhilip\Bencode\Bencode;
 class Tracker
 {
 	private $port = 6003;
-	private $loop;
 	private $client;
 
 	// array -> Downloaded Torrent file.
 	private $torrent;
 
-	public function	__construct(LoopInterface $loop, WebSocketConnection $client)
+	public function	__construct(WebSocketConnection $client)
 	{
-		$this->loop = $loop;
 		$this->client = $client;
 	}
 
@@ -47,7 +45,7 @@ class Tracker
 	private function	interogateHttp(array $metainfo): PromiseInterface
 	{
 		$deferred = new Deferred();
-		$browser = new Browser($this->loop);
+		$browser = new Browser();
 		$uri = $metainfo['announce']
 			. "?info_hash=" . urlencode($metainfo['info_hash'])
 			. "&peer_id=" . urlencode($metainfo['peer_id'])
@@ -79,13 +77,12 @@ class Tracker
 		$deferred = new Deferred();
 		$deferred->reject("udp not working.");
 
-		$loop = $this->loop;
-		$connector = new UdpFactory($this->loop, null, array(
+		$connector = new UdpFactory(Loop::get(), null, array(
 			'bindto' => '0:' . $this->port
 		));
 		$connector->createClient($this->uri)->then(
 
-			function (UdpSocket $tracker) use ($client, $loop)
+			function (UdpSocket $tracker) use ($client)
 			{
 				// Say hello.
 				$connection_id = pack('J', 0x41727101980);
@@ -98,8 +95,8 @@ echo unpack('H*', $connectPacket)[1], PHP_EOL;
 				$tracker->send($connectPacket);
 				// Try contacting tracker every 15 seconds.
 				$retries = 4;
-				$timer = $loop->addPeriodicTimer(5.0, function ($timer)
-					use (&$tracker, $connectPacket, &$retries, $loop)
+				$timer = Loop::addPeriodicTimer(15.0, function ($timer)
+					use (&$tracker, $connectPacket, &$retries)
 				{
 					if ($retries-- > 0)
 					{
@@ -107,7 +104,7 @@ echo unpack('H*', $connectPacket)[1], PHP_EOL;
 						$tracker->send($connectPacket);
 					} else {
 						echo "tracker server is not responding.", PHP_EOL;
-						$loop->cancelTimer($timer);
+						Loop::cancelTimer($timer);
 					}
 				});
 
@@ -115,9 +112,9 @@ echo unpack('H*', $connectPacket)[1], PHP_EOL;
 				echo "Connected to tracker!", PHP_EOL;
 				// Get the data.
 				$tracker->on('message', function ($data, $serverAddr, $tracker)
-					use ($timer, $loop, $client)
+					use ($timer, $client)
 				{
-					$loop->cancelTimer($timer);
+					Loop::cancelTimer($timer);
 					$client->send("Received: " . $data);
 					echo "receiving data from tracker...".PHP_EOL;
 					echo $data, PHP_EOL;

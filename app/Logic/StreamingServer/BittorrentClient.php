@@ -7,7 +7,7 @@ use App\Logic\StreamingServer\Download;
 use \Exception;
 use Rhilip\Bencode\Bencode;
 use Ratchet\ConnectionInterface as WebSocketConnection;
-use React\EventLoop\LoopInterface;
+use React\EventLoop\Loop;
 use React\Http\Browser;
 use React\Promise\Deferred;
 use React\Promise\PromiseInterface;
@@ -16,8 +16,6 @@ use Psr\Http\Message\ResponseInterface;
 
 class BittorrentClient
 {
-	// React loop interface
-	private $loop;
 	// Client from websocket end.
 	private $webClient;
 
@@ -30,9 +28,8 @@ class BittorrentClient
 	private $trackerResponse;
 	private $peers;
 
-	public function	__construct(LoopInterface $loop, WebSocketConnection $webClient, string $torrentLink = 'https://archive.org/download/sintel-torrent/sintel-torrent_archive.torrent'/*'https://webtorrent.io/torrents/sintel.torrent'*/)
+	public function	__construct(WebSocketConnection $webClient, string $torrentLink = 'https://archive.org/download/sintel-torrent/sintel-torrent_archive.torrent'/*'https://webtorrent.io/torrents/sintel.torrent'*/)
 	{
-		$this->loop = $loop;
 		$this->webClient = $webClient;
 		$this->torrentLink = $torrentLink;
 	}
@@ -50,7 +47,7 @@ class BittorrentClient
 				array($this, 'parseTorrent'),
 				array($this, 'error'))
 			->then(
-				array(new Tracker($this->loop, $this->webClient), 'interogate'))
+				array(new Tracker($this->webClient), 'interogate'))
 			->then(
 				array($this, 'extractPeers'));
 			/*->then(
@@ -75,7 +72,7 @@ class BittorrentClient
 	public function	fetchTorrent(string $uri): PromiseInterface
 	{
 		$deferred = new Deferred();
-		$httpClient = new Browser($this->loop);
+		$httpClient = new Browser();
 
 		echo "downloading the torrent file...\n";
 		$httpClient->get($uri)->then(
@@ -120,7 +117,6 @@ class BittorrentClient
 		}
 		$metainfo['info_hash'] = sha1(Bencode::encode($metainfo['info']), true);
 		$metainfo['peer_id'] = $this->peer_id;
-		$metainfo['pieces_count'] = strlen($metainfo['info']['pieces']) / 20;
 		file_put_contents(__DIR__.'/../../../storage/app/test2.trnt', serialize($metainfo));
 		return $metainfo;
 	}
